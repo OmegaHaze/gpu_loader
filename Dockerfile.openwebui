@@ -1,0 +1,18 @@
+##########################################
+# OpenWebUI Dockerfile (Node-based)
+##########################################
+FROM node:18
+
+# 1) Build OpenWebUI
+WORKDIR /openwebui
+RUN git clone https://github.com/OpenWebUI/OpenWebUI.git . && \
+    npm install -g yarn && \
+    yarn install && \
+    yarn build
+
+# 2) Expose port 3000
+EXPOSE 3000
+
+# 3) Default CMD: Start OpenWebUI
+ENV NODE_ENV=production
+CMD ["yarn", "start"]

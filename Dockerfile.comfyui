@@ -1,0 +1,83 @@
+##########################################
+# ComfyUI Dockerfile (GPU-based)
+##########################################
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ---------------------
+# 1) GPU / Memory Env
+# ---------------------
+ENV NCCL_DEBUG=INFO
+ENV NCCL_P2P_DISABLE=0
+ENV NCCL_IB_DISABLE=0
+ENV TORCH_DISTRIBUTED_DEBUG=DETAIL
+ENV CUDA_CACHE_PATH=/workspace/.nv_cuda_cache
+ENV CUDA_CACHE_MAXSIZE=2147483648
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV BNB_CUDA_LOAD_IN_8BIT=1
+
+# ---------------------
+# 2) System Deps
+# ---------------------
+RUN apt update && apt install -y --no-install-recommends \
+    python3 python3-pip python3.10-venv \
+    git wget curl \
+    libnccl2 libnccl-dev \
+    libcudnn8 libcudnn8-dev \
+    nvidia-pyindex nvidia-container-toolkit \
+ && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip
+RUN python3 -m pip install --upgrade pip
+
+# ---------------------
+# 3) Install PyTorch + ML
+# ---------------------
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    xformers onnxruntime-gpu \
+    torch-distributed tensor_parallel \
+    triton accelerate bitsandbytes transformers \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+
+# ---------------------
+# 4) Clone + Install ComfyUI
+# ---------------------
+WORKDIR /workspace
+RUN git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI && \
+    cd /workspace/ComfyUI && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ---------------------
+# 5) Copy Scripts
+# ---------------------
+COPY download_models.sh /workspace/download_models.sh
+RUN chmod +x /workspace/download_models.sh
+
+COPY run_comfyui.sh /workspace/run_comfyui.sh
+RUN chmod +x /workspace/run_comfyui.sh
+
+# ---------------------
+# 6) ENV + Ports
+# ---------------------
+ENV DOWNLOAD_MODELS="false"
+EXPOSE 8188
+
+# (Optional) Volumes for models/logs
+VOLUME /workspace/ComfyUI/models
+VOLUME /workspace/ComfyUI/workflows
+VOLUME /workspace/logs
+
+# ---------------------
+# 7) Default CMD
+# ---------------------
+CMD ["/bin/bash", "-c", "\
+    if [ \"$DOWNLOAD_MODELS\" = \"true\" ]; then \
+      /workspace/download_models.sh; \
+    else \
+      echo 'Skipping model download...'; \
+    fi && \
+    /workspace/run_comfyui.sh \
+"]
