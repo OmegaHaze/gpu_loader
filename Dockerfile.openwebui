@@ -3,16 +3,24 @@
 ##########################################
 FROM node:18
 
-# 1) Build OpenWebUI
+# 1) Install certificates to avoid SSL issues with Git
+RUN apt-get update && apt-get install -y ca-certificates
+
+# 2) Prevent Git from prompting for credentials
+ENV GIT_TERMINAL_PROMPT=0
+
+# 3) Create & switch to /openwebui
 WORKDIR /openwebui
+
+# 4) Clone, install, build
 RUN git clone https://github.com/OpenWebUI/OpenWebUI.git . && \
     npm install -g yarn && \
     yarn install && \
     yarn build
 
-# 2) Expose port 3000
+# 5) Expose port 3000
 EXPOSE 3000
 
-# 3) Default CMD: Start OpenWebUI
+# 6) Default CMD: Start OpenWebUI
 ENV NODE_ENV=production
 CMD ["yarn", "start"]
