@@ -1,26 +1,69 @@
 ##########################################
-# OpenWebUI Dockerfile (Node-based)
+# Stage 1: Build OpenWebUI Front-end
 ##########################################
-FROM node:18
+FROM node:20 AS builder
 
-# 1) Install certificates to avoid SSL issues with Git
-RUN apt-get update && apt-get install -y ca-certificates
+# Install basic tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git
 
-# 2) Prevent Git from prompting for credentials
 ENV GIT_TERMINAL_PROMPT=0
 
-# 3) Create & switch to /openwebui
 WORKDIR /openwebui
+RUN git clone https://github.com/Open-WebUI/Open-WebUI.git . \
+ && rm -f package-lock.json \
+ && yarn add lowlight@^3 \
+ && yarn install \
+ && yarn build
 
-# 4) Clone, install, build
-RUN git clone https://github.com/OpenWebUI/OpenWebUI.git . && \
-    npm install -g yarn && \
-    yarn install && \
-    yarn build
+##########################################
+# Stage 2: Final Image (CUDA + Python + Node)
+##########################################
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
-# 5) Expose port 3000
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 1) System Dependencies: Python3.11 + Node + etc.
+RUN apt-get update && apt-get install -y --no-install-recommends --allow-change-held-packages \
+    python3.11 python3.11-venv python3-pip \
+    git wget curl \
+    libnccl2 libnccl-dev \
+    libcudnn8 libcudnn8-dev \
+    nvidia-container-toolkit \
+ && rm -rf /var/lib/apt/lists/*
+
+# Make python3 point to python3.11
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+# Upgrade pip (now python3 is 3.11)
+RUN python3 -m pip install --upgrade pip
+
+# Copy & install Python deps from requirements.txt
+COPY openwebui/backend/requirements.txt /workspace/OpenWebUI/backend/requirements.txt
+RUN python3 -m pip install --no-cache-dir -r /workspace/OpenWebUI/backend/requirements.txt
+
+# Install Node (so `npx` is available)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y nodejs
+
+# 2) Python ML Packages
+RUN python3 -m pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    xformers onnxruntime-gpu \
+    bitsandbytes transformers accelerate \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+
+# 3) Copy built front-end from Stage 1
+WORKDIR /workspace/OpenWebUI
+COPY --from=builder /openwebui /workspace/OpenWebUI
+
+# 4) Expose Ports (Front-end on 3000, Backend on 7860)
 EXPOSE 3000
+EXPOSE 7860
 
-# 6) Default CMD: Start OpenWebUI
-ENV NODE_ENV=production
-CMD ["yarn", "start"]
+# 5) Copy and enable run_openwebui.sh
+COPY run_openwebui.sh /workspace/OpenWebUI/run_openwebui.sh
+RUN chmod +x /workspace/OpenWebUI/run_openwebui.sh
+
+CMD ["/workspace/OpenWebUI/run_openwebui.sh"]
